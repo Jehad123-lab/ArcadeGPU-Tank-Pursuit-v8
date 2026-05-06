@@ -140,8 +140,9 @@ export class GameScreen extends Screen {
         dir = firingRot.rotateVector([0, 0, -1]);
     }
     dir = UT.VEC3_NORMALIZE(dir);
-    // Spawn exactly 2 units in front of the center of barrel pivot
-    const startPos = [bPos[0] + dir[0] * 2.5, bPos[1] + dir[1] * 2.5, bPos[2] + dir[2] * 2.5];
+    
+    const spawnDist = type === 'grenade' ? 1.0 : 1.5;
+    const startPos = [bPos[0] + dir[0] * spawnDist, bPos[1] + dir[1] * spawnDist, bPos[2] + dir[2] * spawnDist];
 
     const pBody = gfx3JoltManager.addBox({
       width: 0.15, height: 0.15, depth: type === 'grenade' ? 0.3 : 0.6,
@@ -155,10 +156,6 @@ export class GameScreen extends Screen {
     const upVel = type === 'grenade' ? 15 : (isPlayer ? 0.0 : 2.0);
     const pVel = new Gfx3Jolt.Vec3(dir[0] * speed, (dir[1] * speed) + upVel, dir[2] * speed);
     gfx3JoltManager.bodyInterface.SetLinearVelocity(pBody.body.GetID(), pVel);
-
-    try {
-        pBody.body.SetIsSensor(true);
-    } catch(e) {}
 
     this.projectiles.push({
         body: pBody,
@@ -215,36 +212,49 @@ export class GameScreen extends Screen {
     let targetPitch = this.cameraPitch;
     let autoFire = isFiring;
     
-    let closestEnemy = null;
-    let closestDistSq = Infinity;
+    let bestEnemy = null;
+    let bestScore = -Infinity;
     const tPos = this.tank.body.getPosition();
+    
+    const camY = this.cameraYaw;
+    const camP = this.cameraPitch;
+    const camDir = [
+        -Math.sin(camY) * Math.cos(camP),
+        Math.sin(camP),
+        -Math.cos(camY) * Math.cos(camP)
+    ];
     
     for (const enemy of this.enemies) {
         if (enemy.hp <= 0) continue;
         const ePos = enemy.physicsBody.body.GetPosition();
         const dx = ePos.GetX() - tPos[0];
-        const dy = ePos.GetY() - tPos[1];
+        const dy = (ePos.GetY() + 0.5) - (tPos[1] + 1.0);
         const dz = ePos.GetZ() - tPos[2];
-        const distSq = dx*dx + dy*dy + dz*dz;
+        const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
         
-        if (distSq < closestDistSq && distSq < 15000) { // e.g. within approx 122m
-            closestDistSq = distSq;
-            closestEnemy = enemy;
+        if (dist > 0 && dist < 200) {
+            const dirToEnemy = [dx/dist, dy/dist, dz/dist];
+            const dot = camDir[0]*dirToEnemy[0] + camDir[1]*dirToEnemy[1] + camDir[2]*dirToEnemy[2];
+            
+            if (dot > 0.85) { // within ~30 deg cone
+                const score = (dot * 1000) - dist; 
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestEnemy = enemy;
+                }
+            }
         }
     }
 
-    if (closestEnemy) {
-        const ePos = closestEnemy.physicsBody.body.GetPosition();
+    if (bestEnemy) {
+        const ePos = bestEnemy.physicsBody.body.GetPosition();
         const dx = ePos.GetX() - tPos[0];
-        const dy = (ePos.GetY() + 0.3) - (tPos[1] + 1.0);
+        // Target center of enemy
+        const dy = (ePos.GetY() + 0.6) - (tPos[1] + 0.8);
         const dz = ePos.GetZ() - tPos[2];
-        const dist = Math.sqrt(dx*dx + dz*dz);
+        const distXZ = Math.sqrt(dx*dx + dz*dz);
         targetYaw = Math.atan2(-dx, -dz);
-        targetPitch = Math.atan2(dy, dist);
-        
-        let currentYawDiff = targetYaw - this.tank.turretYaw;
-        while (currentYawDiff > Math.PI) currentYawDiff -= Math.PI * 2;
-        while (currentYawDiff < -Math.PI) currentYawDiff += Math.PI * 2;
+        targetPitch = Math.atan2(dy, distXZ);
     }
 
     autoFire = isFiring;
@@ -342,7 +352,7 @@ export class GameScreen extends Screen {
         }
 
         // 3. Ground/Obstacle impact
-        if (!impact && (pPos.GetY() < 0.2 || (p.age > 0.05 && p.age > 0.1 && Math.abs(lastHVelSq - hVelSq) > 2500))) {
+        if (!impact && (pPos.GetY() < 0.1 || (p.age > 0.1 && Math.abs(lastHVelSq - hVelSq) > 3500))) {
             impact = true;
             if (p.type === 'grenade') {
                 this.spawnExplosion(pPos.GetX(), pPos.GetY(), pPos.GetZ(), [0.8, 0.4, 0.1], undefined, 3.5, 'grenade');
