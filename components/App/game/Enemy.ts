@@ -57,9 +57,9 @@ export class Enemy {
   
   rotation: number = 0;
   recoil: number = 0;
-  shootCooldown: number = 0;
   hp: number = 100;
   currentUp: vec3 = [0, 1, 0];
+  waypoint: vec3 | null = null;
   
   constructor(x: number, y: number, z: number) {
     // Note: initMeshes should be called externally to wait for async loading
@@ -82,8 +82,6 @@ export class Enemy {
 
     this.recoil -= (ts / 1000) * 5; 
     if (this.recoil < 0) this.recoil = 0;
-    
-    this.shootCooldown -= ts / 1000;
 
     // Jolt Logic
     const pos = this.physicsBody.body.GetPosition();
@@ -105,11 +103,31 @@ export class Enemy {
 
     const myPos = JOLT_RVEC3_TO_VEC3(pos);
     
-    const dx = targetPos[0] - myPos[0];
-    const dz = targetPos[2] - myPos[2];
+    if (!this.waypoint) {
+        this.waypoint = [
+            myPos[0] + (Math.random() - 0.5) * 40,
+            0,
+            myPos[2] + (Math.random() - 0.5) * 40
+        ];
+        // clamp waypoint
+        if (this.waypoint[0] > mapLimit) this.waypoint[0] = mapLimit;
+        if (this.waypoint[0] < -mapLimit) this.waypoint[0] = -mapLimit;
+        if (this.waypoint[2] > mapLimit) this.waypoint[2] = mapLimit;
+        if (this.waypoint[2] < -mapLimit) this.waypoint[2] = -mapLimit;
+    }
+    
+    const dx = this.waypoint[0] - myPos[0];
+    const dz = this.waypoint[2] - myPos[2];
     const dist = Math.sqrt(dx*dx + dz*dz);
     
-    const targetAngle = Math.atan2(-dx, -dz);
+    if (dist < 4) {
+        this.waypoint = null;
+    }
+    
+    let targetAngle = 0;
+    if (this.waypoint) {
+        targetAngle = Math.atan2(-dx, -dz);
+    }
     
     // Smooth rotation towards target
     const PI2 = Math.PI * 2;
@@ -120,14 +138,9 @@ export class Enemy {
     const rotSpeed = 2.0;    
     this.rotation += Math.sign(angleDiff) * Math.min(Math.abs(angleDiff), rotSpeed * (ts / 1000));
     
-    // Simple Chase - Stop when close
-    const speed = 6;
-    let throttle = 0;
-    if (dist > 15) {
-        throttle = 1; // Move forward
-    } else if (dist < 10) {
-        throttle = -0.5; // Back up a bit
-    }
+    // Wander - move forward
+    const speed = 4;
+    let throttle = 1;
 
     const forward = [-Math.sin(this.rotation), 0, -Math.cos(this.rotation)] as vec3;
     const linVel = UT.VEC3_SCALE(forward, throttle * speed);
