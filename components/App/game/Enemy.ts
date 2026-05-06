@@ -151,14 +151,9 @@ export class Enemy {
     let muzzlePos: vec3 | undefined = undefined;
     let dir: vec3 | undefined = undefined;
 
-    // Shoot Logic
+    // Shoot Logic disabled per request
     if (dist < 40 && Math.abs(angleDiff) < 0.2 && this.shootCooldown <= 0) {
-        const shootData = this.shoot(quat);
-        muzzlePos = shootData.muzzlePos;
-        dir = shootData.dir;
         this.shootCooldown = 2.0; // 2 sec cooldown
-        this.recoil = 1.0;
-        didShoot = true;
     }
     
     return { didShoot, muzzlePos, dir };

@@ -167,7 +167,7 @@ export class GameScreen extends Screen {
       x: startPos[0], y: startPos[1], z: startPos[2],
       motionType: Gfx3Jolt.EMotionType_Dynamic,
       layer: JOLT_LAYER_MOVING,
-      settings: { mMassPropertiesOverride: 0.05, mRestitution: 0.0, mGravityFactor: type === 'grenade' ? 1.5 : 0.2 }
+      settings: { mIsSensor: true, mMassPropertiesOverride: 0.05, mRestitution: 0.0, mGravityFactor: type === 'grenade' ? 1.5 : 0.2 }
     });
 
     const speed = isPlayer ? (type === 'grenade' ? 35 : 100) : (type === 'grenade' ? 30 : 60);
@@ -342,38 +342,28 @@ export class GameScreen extends Screen {
 
         // 2. Check hitting enemies
         if (!impact && p.age > 0.0) {
-            const pLastPos = [pPos.GetX() - vX * (ts/1000), pPos.GetY() - vY * (ts/1000), pPos.GetZ() - vZ * (ts/1000)];
             for (const enemy of this.enemies) {
                 if (enemy.hp <= 0 || enemy === p.owner) continue;
+
                 const ePos = enemy.physicsBody.body.GetPosition();
-                
-                // Segment-to-point distance for fast moving proj
                 const px = pPos.GetX(), py = pPos.GetY(), pz = pPos.GetZ();
                 const ex = ePos.GetX(), ey = ePos.GetY(), ez = ePos.GetZ();
                 
-                // Midpoint check to approximate
-                const midX = (px + pLastPos[0]) / 2;
-                const midY = (py + pLastPos[1]) / 2;
-                const midZ = (pz + pLastPos[2]) / 2;
+                const distSq = (px-ex)*(px-ex) + (py-ey)*(py-ey) + (pz-ez)*(pz-ez);
                 
-                const d1Sq = (px-ex)*(px-ex) + (py-ey)*(py-ey) + (pz-ez)*(pz-ez);
-                const d2Sq = (midX-ex)*(midX-ex) + (midY-ey)*(midY-ey) + (midZ-ez)*(midZ-ez);
-                
-                const distSq = Math.min(d1Sq, d2Sq);
-                
-                if (distSq < 10.0) { // approx 3.1m radius
+                if (distSq < 12.0) { // approx 3.4m radius
                     impact = true;
                     if (p.type === 'grenade') {
                         enemy.hp -= 100;
-                        this.spawnExplosion(pPos.GetX(), pPos.GetY(), pPos.GetZ(), [0.8, 0.4, 0.1], undefined, 3.0, 'grenade');
+                        this.spawnExplosion(px, py, pz, [0.8, 0.4, 0.1], undefined, 3.0, 'grenade');
                     } else {
                         enemy.hp -= 34;
-                        this.spawnExplosion(pPos.GetX(), pPos.GetY(), pPos.GetZ(), [1.0, 0.7, 0.2], undefined, 1.2);
+                        this.spawnExplosion(px, py, pz, [1.0, 0.7, 0.2], undefined, 1.2);
                     }
 
-                    const pushDir = [vX, vY, vZ];
+                    const pushDir = Math.sqrt(vX*vX + vY*vY + vZ*vZ) > 0.1 ? UT.VEC3_NORMALIZE([vX, vY, vZ]) : [0, 1, 0];
                     const mag = p.type === 'grenade' ? 1500 : 700;
-                    const forceVec = UT.VEC3_SCALE(UT.VEC3_NORMALIZE([pushDir[0], 0.5, pushDir[2]]), mag);
+                    const forceVec = UT.VEC3_SCALE([pushDir[0], 0.5, pushDir[2]], mag);
                     gfx3JoltManager.bodyInterface.AddImpulse(enemy.physicsBody.body.GetID(), new Gfx3Jolt.Vec3(forceVec[0], forceVec[1], forceVec[2]));
 
                     if (enemy.hp <= 0) {
