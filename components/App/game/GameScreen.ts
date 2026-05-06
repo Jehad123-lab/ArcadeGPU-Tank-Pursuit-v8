@@ -141,15 +141,15 @@ export class GameScreen extends Screen {
     }
     dir = UT.VEC3_NORMALIZE(dir);
     
-    const spawnDist = type === 'grenade' ? 1.0 : 1.5;
-    const startPos = [bPos[0] + dir[0] * spawnDist, bPos[1] + dir[1] * spawnDist, bPos[2] + dir[2] * spawnDist];
+    const spawnDist = type === 'grenade' ? 2.5 : 2.5;
+    const startPos = [bPos[0] + dir[0] * spawnDist, Math.max(0.5, bPos[1] + dir[1] * spawnDist), bPos[2] + dir[2] * spawnDist];
 
     const pBody = gfx3JoltManager.addBox({
       width: 0.15, height: 0.15, depth: type === 'grenade' ? 0.3 : 0.6,
       x: startPos[0], y: startPos[1], z: startPos[2],
       motionType: Gfx3Jolt.EMotionType_Dynamic,
       layer: JOLT_LAYER_MOVING,
-      settings: { mMassPropertiesOverride: 0.05, mRestitution: 0.0, mGravityFactor: type === 'grenade' ? 1.5 : 0.2 }
+      settings: { mMassPropertiesOverride: 0.05, mRestitution: 0.0, mGravityFactor: type === 'grenade' ? 2.0 : 0.2 }
     });
 
     const speed = isPlayer ? (type === 'grenade' ? 35 : 100) : (type === 'grenade' ? 30 : 60);
@@ -236,8 +236,8 @@ export class GameScreen extends Screen {
             const dirToEnemy = [dx/dist, dy/dist, dz/dist];
             const dot = camDir[0]*dirToEnemy[0] + camDir[1]*dirToEnemy[1] + camDir[2]*dirToEnemy[2];
             
-            if (dot > 0.85) { // within ~30 deg cone
-                const score = (dot * 1000) - dist; 
+            if (dot > 0.90) { // within ~25 deg cone
+                const score = dot; // prioritize strictly who is closest to crosshair
                 if (score > bestScore) {
                     bestScore = score;
                     bestEnemy = enemy;
@@ -300,17 +300,20 @@ export class GameScreen extends Screen {
         
         const curV = p.body.body.GetLinearVelocity();
         const vX = curV.GetX(), vY = curV.GetY(), vZ = curV.GetZ();
-        const hVelSq = vX*vX + vZ*vZ;
-        const lastHVelSq = p.lastVel[0]*p.lastVel[0] + p.lastVel[2]*p.lastVel[2];
+        
+        const dvX = vX - p.lastVel[0];
+        const dvY = vY - p.lastVel[1];
+        const dvZ = vZ - p.lastVel[2];
+        const deltaVSq = dvX*dvX + dvY*dvY + dvZ*dvZ;
         
         let impact = false;
         
         // 1. Check hitting player (if not owner)
-        if (p.owner !== this.tank && p.age > 0.1) {
+        if (p.owner !== this.tank && p.age > 0.05) {
             const tPos = this.tank.body.getPosition();
             const dx = pPos.GetX() - tPos[0], dy = pPos.GetY() - tPos[1], dz = pPos.GetZ() - tPos[2];
-            const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
-            if (dist < 2.5) {
+            const distSq = dx*dx + dy*dy + dz*dz;
+            if (distSq < 9.0) {
                 impact = true;
                 this.explosions.push(new Explosion(pPos.GetX(), pPos.GetY(), pPos.GetZ(), [0.8, 0.2, 0.2]));
                 const pushDir = UT.VEC3_NORMALIZE([vX, vY, vZ]);
@@ -320,14 +323,27 @@ export class GameScreen extends Screen {
         }
 
         // 2. Check hitting enemies
-        if (!impact && p.age > 0.1) {
+        if (!impact && p.age > 0.0) {
+            const pLastPos = [pPos.GetX() - vX * (ts/1000), pPos.GetY() - vY * (ts/1000), pPos.GetZ() - vZ * (ts/1000)];
             for (const enemy of this.enemies) {
                 if (enemy.hp <= 0 || enemy === p.owner) continue;
                 const ePos = enemy.physicsBody.body.GetPosition();
-                const dx = pPos.GetX() - ePos.GetX(), dy = pPos.GetY() - ePos.GetY(), dz = pPos.GetZ() - ePos.GetZ();
-                const distSq = dx*dx + dy*dy + dz*dz;
                 
-                if (distSq < 6.0) { // approx 2.45m
+                // Segment-to-point distance for fast moving proj
+                const px = pPos.GetX(), py = pPos.GetY(), pz = pPos.GetZ();
+                const ex = ePos.GetX(), ey = ePos.GetY(), ez = ePos.GetZ();
+                
+                // Midpoint check to approximate
+                const midX = (px + pLastPos[0]) / 2;
+                const midY = (py + pLastPos[1]) / 2;
+                const midZ = (pz + pLastPos[2]) / 2;
+                
+                const d1Sq = (px-ex)*(px-ex) + (py-ey)*(py-ey) + (pz-ez)*(pz-ez);
+                const d2Sq = (midX-ex)*(midX-ex) + (midY-ey)*(midY-ey) + (midZ-ez)*(midZ-ez);
+                
+                const distSq = Math.min(d1Sq, d2Sq);
+                
+                if (distSq < 10.0) { // approx 3.1m radius
                     impact = true;
                     if (p.type === 'grenade') {
                         enemy.hp -= 100;
@@ -343,7 +359,7 @@ export class GameScreen extends Screen {
                     gfx3JoltManager.bodyInterface.AddImpulse(enemy.physicsBody.body.GetID(), new Gfx3Jolt.Vec3(forceVec[0], forceVec[1], forceVec[2]));
 
                     if (enemy.hp <= 0) {
-                        this.spawnExplosion(ePos.GetX(), ePos.GetY(), ePos.GetZ(), [0.8, 0.2, 0.2], 2.0);
+                        this.spawnExplosion(ex, ey, ez, [0.8, 0.2, 0.2], undefined, 2.0);
                         gfx3JoltManager.bodyInterface.SetPosition(enemy.physicsBody.body.GetID(), VEC3_TO_JOLT_RVEC3([0, -100, 0]), Gfx3Jolt.EActivation_DontActivate);
                     }
                     break;
@@ -352,7 +368,7 @@ export class GameScreen extends Screen {
         }
 
         // 3. Ground/Obstacle impact
-        if (!impact && (pPos.GetY() < 0.1 || (p.age > 0.1 && Math.abs(lastHVelSq - hVelSq) > 3500))) {
+        if (!impact && (pPos.GetY() < 0.1 || (p.age > 0.05 && deltaVSq > 600))) {
             impact = true;
             if (p.type === 'grenade') {
                 this.spawnExplosion(pPos.GetX(), pPos.GetY(), pPos.GetZ(), [0.8, 0.4, 0.1], undefined, 3.5, 'grenade');
