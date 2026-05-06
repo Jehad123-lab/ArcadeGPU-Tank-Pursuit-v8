@@ -1,4 +1,4 @@
-import { JOLT_LAYER_MOVING, JOLT_RVEC3_TO_VEC3, Gfx3Jolt, gfx3JoltManager } from '@lib/gfx3_jolt/gfx3_jolt_manager';
+import { JOLT_LAYER_MOVING, JOLT_RVEC3_TO_VEC3, VEC3_TO_JOLT_RVEC3, Gfx3Jolt, gfx3JoltManager } from '@lib/gfx3_jolt/gfx3_jolt_manager';
 import { Gfx3Mesh } from '@lib/gfx3_mesh/gfx3_mesh';
 import { Gfx3MeshJSM } from '@lib/gfx3_mesh/gfx3_mesh_jsm';
 import { gfx3MeshRenderer } from '@lib/gfx3_mesh/gfx3_mesh_renderer';
@@ -7,10 +7,10 @@ import { UT } from '@lib/core/utils';
 import { createBoxMesh } from './GameUtils';
 
 /**
- * The Enemy class represents an AI-controlled tank.
+ * The NPC class represents an AI-controlled tank.
  * It uses static shared meshes for better performance across many instances.
  */
-export class Enemy {
+export class NPC {
   static bodyMesh: Gfx3Mesh;
   static turretMesh: Gfx3Mesh;
   static barrelMesh: Gfx3Mesh;
@@ -21,36 +21,36 @@ export class Enemy {
   static initialized = false;
 
   /**
-   * Initializes shared meshes for all enemy instances.
+   * Initializes shared meshes for all npc instances.
    * Supports falling back to procedural boxes if JSM files are missing.
    */
   static async initMeshes() {
-    if (Enemy.initialized) return;
-    Enemy.initialized = true;
-    const chassisColor: [number, number, number] = [0.8, 0.2, 0.2]; 
-    const turretColor: [number, number, number] = [0.6, 0.1, 0.1];
+    if (NPC.initialized) return;
+    NPC.initialized = true;
+    const chassisColor: [number, number, number] = [0.2, 0.8, 0.2]; // Greenish for friendly NPC 
+    const turretColor: [number, number, number] = [0.1, 0.6, 0.1];
     const trackColor: [number, number, number] = [0.15, 0.15, 0.15];
     const engineColor: [number, number, number] = [0.2, 0.2, 0.2];
 
     // Defaults
-    Enemy.bodyMesh = createBoxMesh(1.5, 0.6, 2.2, chassisColor);
-    Enemy.turretMesh = createBoxMesh(1.1, 0.5, 1.1, turretColor);
-    Enemy.barrelMesh = createBoxMesh(0.2, 0.2, 1.5, [0.2, 0.2, 0.2]);
-    Enemy.trackLMesh = createBoxMesh(0.4, 0.6, 2.4, trackColor);
-    Enemy.trackRMesh = createBoxMesh(0.4, 0.6, 2.4, trackColor);
-    Enemy.engineMesh = createBoxMesh(1.2, 0.4, 0.6, engineColor);
-    Enemy.projMesh = createBoxMesh(0.6, 0.6, 0.6, [1.0, 0.2, 0.0]);
+    NPC.bodyMesh = createBoxMesh(1.5, 0.6, 2.2, chassisColor);
+    NPC.turretMesh = createBoxMesh(1.1, 0.5, 1.1, turretColor);
+    NPC.barrelMesh = createBoxMesh(0.2, 0.2, 1.5, [0.2, 0.2, 0.2]);
+    NPC.trackLMesh = createBoxMesh(0.4, 0.6, 2.4, trackColor);
+    NPC.trackRMesh = createBoxMesh(0.4, 0.6, 2.4, trackColor);
+    NPC.engineMesh = createBoxMesh(1.2, 0.4, 0.6, engineColor);
+    NPC.projMesh = createBoxMesh(0.6, 0.6, 0.6, [1.0, 0.2, 0.0]);
 
     // Try high-fidelity override
     try {
       const bJSM = new Gfx3MeshJSM();
       await bJSM.loadFromFile('/models/tank_body.jsm');
-      Enemy.bodyMesh = bJSM;
+      NPC.bodyMesh = bJSM;
     } catch(e) {
-      console.warn('Enemy: Failed to load JSM models, falling back to boxes.', e);
+      console.warn('NPC: Failed to load JSM models, falling back to boxes.', e);
     }
 
-    Enemy.initialized = true;
+    NPC.initialized = true;
   }
 
   physicsBody: any;
@@ -58,13 +58,13 @@ export class Enemy {
   rotation: number = 0;
   recoil: number = 0;
   hp: number = 100;
+  respawnTimer: number = 0;
   currentUp: vec3 = [0, 1, 0];
   waypoint: vec3 | null = null;
   
   constructor(x: number, y: number, z: number) {
-    // Note: initMeshes should be called externally to wait for async loading
-    if (!Enemy.initialized) {
-       Enemy.initMeshes(); 
+    if (!NPC.initialized) {
+       NPC.initMeshes(); 
     }
 
     this.physicsBody = gfx3JoltManager.addCylinder({
@@ -76,9 +76,14 @@ export class Enemy {
     });
   }
 
-
   update(ts: number, targetPos: any) {
-    if (this.hp <= 0) return;
+    if (this.hp <= 0) {
+        this.respawnTimer -= ts / 1000;
+        if (this.respawnTimer <= 0) {
+            this.respawn();
+        }
+        return;
+    }
 
     this.recoil -= (ts / 1000) * 5; 
     if (this.recoil < 0) this.recoil = 0;
@@ -175,42 +180,15 @@ export class Enemy {
 
     const joltQuat = new Gfx3Jolt.Quat(quat.x, quat.y, quat.z, quat.w);
     gfx3JoltManager.bodyInterface.SetRotation(this.physicsBody.body.GetID(), joltQuat, Gfx3Jolt.EActivation_Activate);
-    
-    let didShoot = false;
-    let muzzlePos: vec3 | undefined = undefined;
-    let dir: vec3 | undefined = undefined;
-
-    // Shoot Logic disabled per request
-    if (dist < 40 && Math.abs(angleDiff) < 0.2 && this.shootCooldown <= 0) {
-        this.shootCooldown = 2.0; // 2 sec cooldown
-    }
-    
-    return { didShoot, muzzlePos, dir };
   }
-  
-  /**
-   * Shoot logic is handled by GameScreen.
-   */
-  shoot(q: Quaternion): { muzzlePos: vec3, dir: vec3 } {
-    const direction = q.rotateVector([0, 0, -1]); 
-    const currentRot = this.physicsBody.body.GetRotation();
-    const bodyQ = new Quaternion(currentRot.GetW(), currentRot.GetX(), currentRot.GetY(), currentRot.GetZ());
-    
-    const visualRecoil = this.recoil > 0 ? this.recoil * 0.3 : 0;
-    const barrelRelativePos = bodyQ.rotateVector([0, 0, -0.8 + visualRecoil]);
-    const pos = this.physicsBody.body.GetPosition();
-    const bPos = [pos.GetX() + barrelRelativePos[0], pos.GetY() + 0.45 + barrelRelativePos[1], pos.GetZ() + barrelRelativePos[2]];
 
-    const startPos = [
-      bPos[0] + direction[0] * 1.5,
-      bPos[1] + direction[1] * 1.5,
-      bPos[2] + direction[2] * 1.5,
-    ];
-    
-    return {
-       muzzlePos: [startPos[0], startPos[1], startPos[2]] as vec3,
-       dir: [direction[0], direction[1], direction[2]] as vec3
-    };
+  respawn() {
+      this.hp = 100;
+      const x = (Math.random() - 0.5) * 200;
+      const z = (Math.random() - 0.5) * 200;
+      gfx3JoltManager.bodyInterface.SetPosition(this.physicsBody.body.GetID(), VEC3_TO_JOLT_RVEC3([x, 5, z]), Gfx3Jolt.EActivation_Activate);
+      gfx3JoltManager.bodyInterface.SetLinearVelocity(this.physicsBody.body.GetID(), new Gfx3Jolt.Vec3(0, 0, 0));
+      gfx3JoltManager.bodyInterface.SetAngularVelocity(this.physicsBody.body.GetID(), new Gfx3Jolt.Vec3(0, 0, 0));
   }
 
   draw() {
@@ -225,27 +203,28 @@ export class Enemy {
     const origin: vec3 = [pos.GetX(), pos.GetY(), pos.GetZ()];
 
     const matBody = UT.MAT4_TRANSFORM(origin, ZERO, scale, q);
-    gfx3MeshRenderer.drawMesh(Enemy.bodyMesh, matBody);
+    gfx3MeshRenderer.drawMesh(NPC.bodyMesh, matBody);
 
     const trackOffsetL = q.rotateVector([-0.8, -0.1, 0]);
     const matTrackL = UT.MAT4_TRANSFORM([origin[0] + trackOffsetL[0], origin[1] + trackOffsetL[1], origin[2] + trackOffsetL[2]], ZERO, scale, q);
-    gfx3MeshRenderer.drawMesh(Enemy.trackLMesh, matTrackL);
+    gfx3MeshRenderer.drawMesh(NPC.trackLMesh, matTrackL);
 
     const trackOffsetR = q.rotateVector([0.8, -0.1, 0]);
     const matTrackR = UT.MAT4_TRANSFORM([origin[0] + trackOffsetR[0], origin[1] + trackOffsetR[1], origin[2] + trackOffsetR[2]], ZERO, scale, q);
-    gfx3MeshRenderer.drawMesh(Enemy.trackRMesh, matTrackR);
+    gfx3MeshRenderer.drawMesh(NPC.trackRMesh, matTrackR);
 
     const engineOffset = q.rotateVector([0, 0.2, 1.2]);
     const matEngine = UT.MAT4_TRANSFORM([origin[0] + engineOffset[0], origin[1] + engineOffset[1], origin[2] + engineOffset[2]], ZERO, scale, q);
-    gfx3MeshRenderer.drawMesh(Enemy.engineMesh, matEngine);
+    gfx3MeshRenderer.drawMesh(NPC.engineMesh, matEngine);
 
     const turretOffset = q.rotateVector([0, 0.45, 0]);
     const matTurret = UT.MAT4_TRANSFORM([origin[0] + turretOffset[0], origin[1] + turretOffset[1], origin[2] + turretOffset[2]], ZERO, scale, q);
-    gfx3MeshRenderer.drawMesh(Enemy.turretMesh, matTurret);
+    gfx3MeshRenderer.drawMesh(NPC.turretMesh, matTurret);
 
     const visualRecoil = this.recoil > 0 ? this.recoil * 0.3 : 0;
     const barrelRelativePos = q.rotateVector([0, 0, -0.8 + visualRecoil]);
     const matBarrel = UT.MAT4_TRANSFORM([origin[0] + turretOffset[0] + barrelRelativePos[0], origin[1] + turretOffset[1] + barrelRelativePos[1], origin[2] + turretOffset[2] + barrelRelativePos[2]], ZERO, scale, q);
-    gfx3MeshRenderer.drawMesh(Enemy.barrelMesh, matBarrel);
+    gfx3MeshRenderer.drawMesh(NPC.barrelMesh, matBarrel);
   }
 }
+
