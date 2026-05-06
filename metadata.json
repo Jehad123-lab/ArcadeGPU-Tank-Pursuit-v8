@@ -1,0 +1,6 @@
+{
+  "name": "ArcadeGPU: Tank Pursuit v8",
+  "description": "A high-performance 3D Tank Game built with ArcadeGPU, featuring custom physics, JSM model loading, and a retro-arcade aesthetic.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
