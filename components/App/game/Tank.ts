@@ -56,8 +56,8 @@ export class Tank {
       Tank.projGrenadeMesh = createBoxMesh(0.5, 0.5, 0.5, [0.2, 0.2, 0.2]);
     }
 
-    this.physicsBody = gfx3JoltManager.addBox({
-      width: 3.45, height: 0.9, depth: 3.6,
+    this.physicsBody = gfx3JoltManager.addCylinder({
+      radius: 1.8, height: 0.9,
       x: 0, y: 0.5, z: 0,
       motionType: Gfx3Jolt.EMotionType_Dynamic,
       layer: JOLT_LAYER_MOVING,

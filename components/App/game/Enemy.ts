@@ -67,12 +67,12 @@ export class Enemy {
        Enemy.initMeshes(); 
     }
 
-    this.physicsBody = gfx3JoltManager.addBox({
-      width: 1.5, height: 0.6, depth: 2.2,
+    this.physicsBody = gfx3JoltManager.addCylinder({
+      radius: 1.1, height: 0.6,
       x, y, z,
       motionType: Gfx3Jolt.EMotionType_Dynamic,
       layer: JOLT_LAYER_MOVING,
-      settings: { mAngularDamping: 2.0, mLinearDamping: 1.5, mMassPropertiesOverride: 100.0 }
+      settings: { mAngularDamping: 2.0, mLinearDamping: 1.5, mMassPropertiesOverride: 100.0, mAllowedDOFs: 7 }
     });
   }
 
