@@ -77,8 +77,8 @@ export class Enemy {
   }
 
 
-  update(ts: number, targetPos: any): { didShoot: boolean, muzzlePos?: vec3, dir?: vec3 } {
-    if (this.hp <= 0) return { didShoot: false };
+  update(ts: number, targetPos: any) {
+    if (this.hp <= 0) return;
 
     this.recoil -= (ts / 1000) * 5; 
     if (this.recoil < 0) this.recoil = 0;
