@@ -245,14 +245,9 @@ export class GameScreen extends Screen {
         let currentYawDiff = targetYaw - this.tank.turretYaw;
         while (currentYawDiff > Math.PI) currentYawDiff -= Math.PI * 2;
         while (currentYawDiff < -Math.PI) currentYawDiff += Math.PI * 2;
-        
-        // Auto-fire if roughly aimed
-        if (Math.abs(currentYawDiff) < 0.15 && dist < 80) {
-            autoFire = 'normal';
-        }
     }
 
-    if (isFiring === 'grenade') autoFire = 'grenade';
+    autoFire = isFiring;
 
     const targetPos = this.tank.body.getPosition();
     for (const enemy of this.enemies) {
