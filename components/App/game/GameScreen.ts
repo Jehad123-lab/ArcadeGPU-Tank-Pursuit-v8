@@ -141,15 +141,33 @@ export class GameScreen extends Screen {
     }
     dir = UT.VEC3_NORMALIZE(dir);
     
-    const spawnDist = type === 'grenade' ? 2.5 : 2.5;
-    const startPos = [bPos[0] + dir[0] * spawnDist, Math.max(0.5, bPos[1] + dir[1] * spawnDist), bPos[2] + dir[2] * spawnDist];
+    const spawnDist = type === 'grenade' ? 4.5 : 3.5;
+    let bulletX = bPos[0] + dir[0] * spawnDist;
+    let bulletY = bPos[1] + dir[1] * spawnDist;
+    let bulletZ = bPos[2] + dir[2] * spawnDist;
+
+    if (isPlayer) {
+        const tPos = this.tank.body.getPosition();
+        let dx = bulletX - tPos[0];
+        let dz = bulletZ - tPos[2];
+        const dist2D = Math.sqrt(dx*dx + dz*dz);
+        const minDist = 3.0;
+        if (dist2D < minDist) {
+            if (dist2D < 0.001) { dx = dir[0] || 1; dz = dir[2] || 0; }
+            const normDist = Math.sqrt(dx*dx + dz*dz);
+            bulletX = tPos[0] + (dx / normDist) * minDist;
+            bulletZ = tPos[2] + (dz / normDist) * minDist;
+        }
+    }
+
+    const startPos = [bulletX, Math.max(0.5, bulletY), bulletZ];
 
     const pBody = gfx3JoltManager.addBox({
       width: 0.15, height: 0.15, depth: type === 'grenade' ? 0.3 : 0.6,
       x: startPos[0], y: startPos[1], z: startPos[2],
       motionType: Gfx3Jolt.EMotionType_Dynamic,
       layer: JOLT_LAYER_MOVING,
-      settings: { mMassPropertiesOverride: 0.05, mRestitution: 0.0, mGravityFactor: type === 'grenade' ? 2.0 : 0.2 }
+      settings: { mMassPropertiesOverride: 0.05, mRestitution: 0.0, mGravityFactor: type === 'grenade' ? 1.5 : 0.2 }
     });
 
     const speed = isPlayer ? (type === 'grenade' ? 35 : 100) : (type === 'grenade' ? 30 : 60);
