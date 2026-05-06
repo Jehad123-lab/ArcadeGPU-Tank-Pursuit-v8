@@ -68,7 +68,7 @@ export class Enemy {
     }
 
     this.physicsBody = gfx3JoltManager.addCylinder({
-      radius: 1.1, height: 0.6,
+      radius: 1.4, height: 0.6,
       x, y, z,
       motionType: Gfx3Jolt.EMotionType_Dynamic,
       layer: JOLT_LAYER_MOVING,
@@ -87,6 +87,22 @@ export class Enemy {
 
     // Jolt Logic
     const pos = this.physicsBody.body.GetPosition();
+    
+    // World Boundary Clamp
+    const mapLimit = 190;
+    let clampedX = pos.GetX();
+    let clampedZ = pos.GetZ();
+    let needsClamp = false;
+    
+    if (clampedX > mapLimit) { clampedX = mapLimit; needsClamp = true; }
+    if (clampedX < -mapLimit) { clampedX = -mapLimit; needsClamp = true; }
+    if (clampedZ > mapLimit) { clampedZ = mapLimit; needsClamp = true; }
+    if (clampedZ < -mapLimit) { clampedZ = -mapLimit; needsClamp = true; }
+    
+    if (needsClamp) {
+        gfx3JoltManager.bodyInterface.SetPosition(this.physicsBody.body.GetID(), new Gfx3Jolt.RVec3(clampedX, pos.GetY(), clampedZ), Gfx3Jolt.EActivation_Activate);
+    }
+
     const myPos = JOLT_RVEC3_TO_VEC3(pos);
     
     const dx = targetPos[0] - myPos[0];

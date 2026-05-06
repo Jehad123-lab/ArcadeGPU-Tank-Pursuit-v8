@@ -28,10 +28,10 @@ export class Environment {
 
   constructor() {
     if (!Environment.meshesInitialized) {
-      Environment.wallBaseN = createBoxMesh(400, 40, 20, [0.3, 0.4, 0.3]);
-      Environment.wallBaseS = createBoxMesh(400, 40, 20, [0.3, 0.4, 0.3]);
-      Environment.wallBaseE = createBoxMesh(20, 40, 400, [0.3, 0.4, 0.3]);
-      Environment.wallBaseW = createBoxMesh(20, 40, 400, [0.3, 0.4, 0.3]);
+      Environment.wallBaseN = createBoxMesh(400, 40, 40, [0.5, 0.5, 0.5]);
+      Environment.wallBaseS = createBoxMesh(400, 40, 40, [0.5, 0.5, 0.5]);
+      Environment.wallBaseE = createBoxMesh(40, 40, 400, [0.5, 0.5, 0.5]);
+      Environment.wallBaseW = createBoxMesh(40, 40, 400, [0.5, 0.5, 0.5]);
       
       Environment.treeTrunk = createBoxMesh(1, 1, 1, [0.4, 0.25, 0.1]); // 1x1x1 scaled
       Environment.treeLeaves = createBoxMesh(1, 1, 1, [0.2, 0.6, 0.1]); 
@@ -57,7 +57,7 @@ export class Environment {
 
     // Generate mountains/walls at the edges
     const mapSize = 400;
-    const borderThickness = 20;
+    const borderThickness = 40;
     const borderHeight = 40;
     
     // North wall

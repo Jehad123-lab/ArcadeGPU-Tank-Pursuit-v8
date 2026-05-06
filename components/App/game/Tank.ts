@@ -57,7 +57,7 @@ export class Tank {
     }
 
     this.physicsBody = gfx3JoltManager.addCylinder({
-      radius: 1.8, height: 0.9,
+      radius: 2.1, height: 0.9,
       x: 0, y: 0.5, z: 0,
       motionType: Gfx3Jolt.EMotionType_Dynamic,
       layer: JOLT_LAYER_MOVING,
@@ -127,6 +127,22 @@ export class Tank {
     gfx3JoltManager.bodyInterface.SetLinearVelocity(this.physicsBody.body.GetID(), joltLinVel);
     
     const pos = this.physicsBody.body.GetPosition();
+    
+    // World Boundary Clamp
+    const mapLimit = 190;
+    let clampedX = pos.GetX();
+    let clampedZ = pos.GetZ();
+    let needsClamp = false;
+    
+    if (clampedX > mapLimit) { clampedX = mapLimit; needsClamp = true; }
+    if (clampedX < -mapLimit) { clampedX = -mapLimit; needsClamp = true; }
+    if (clampedZ > mapLimit) { clampedZ = mapLimit; needsClamp = true; }
+    if (clampedZ < -mapLimit) { clampedZ = -mapLimit; needsClamp = true; }
+    
+    if (needsClamp) {
+        gfx3JoltManager.bodyInterface.SetPosition(this.physicsBody.body.GetID(), new Gfx3Jolt.RVec3(clampedX, pos.GetY(), clampedZ), Gfx3Jolt.EActivation_Activate);
+    }
+
     let quat = Quaternion.createFromEuler(this.rotation, 0, 0, 'YXZ');
     
     // Cast rays from 4 corners down to find the ground normal for smooth banking
