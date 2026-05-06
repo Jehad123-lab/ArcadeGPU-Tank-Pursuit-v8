@@ -28,9 +28,6 @@ export class Tank {
   wasFiringInternal: boolean = false;
   currentUp: vec3 = [0, 1, 0];
   
-  // Bullets instances
-  projectiles: { body: any, life: number, rot: Quaternion, type: 'normal' | 'grenade', lastVel: [number, number, number] }[] = [];
-
   static projMesh: Gfx3Mesh | null = null;
   static projGrenadeMesh: Gfx3Mesh | null = null;
 
@@ -258,96 +255,18 @@ export class Tank {
     this.antenna.setPosition(turretPos[0] + antennaOffset[0], turretPos[1] + antennaOffset[1], turretPos[2] + antennaOffset[2]);
     this.antenna.setQuaternion(turretQ);
     
-    // Projectile Lifecycle
-    for (let i = this.projectiles.length - 1; i >= 0; i--) {
-       const p = this.projectiles[i];
-       p.life -= (ts / 1000);
-       
-       if (p.life <= 0) {
-          gfx3JoltManager.remove(p.body.bodyId);
-          this.projectiles.splice(i, 1);
-       } else {
-          const curV = p.body.body.GetLinearVelocity();
-          p.lastVel = [curV.GetX(), curV.GetY(), curV.GetZ()];
-          
-          if (p.type === 'normal') {
-             // For normal bullets, make rotation match velocity
-             const velLen = Math.sqrt(p.lastVel[0]*p.lastVel[0] + p.lastVel[1]*p.lastVel[1] + p.lastVel[2]*p.lastVel[2]);
-             if (velLen > 0.1) {
-                 const dir = [-p.lastVel[0]/velLen, -p.lastVel[1]/velLen, -p.lastVel[2]/velLen]; // -Z is forward
-                 const up: vec3 = [0, 1, 0];
-                 const right = UT.VEC3_NORMALIZE(UT.VEC3_CROSS(up, dir));
-                 const newUp = UT.VEC3_CROSS(dir, right);
-                 
-                 // Create rotation matrix manually or just use lookAt
-                 // For now, let's keep it simple: normal bullets don't tumble.
-                 const yaw = Math.atan2(dir[0], dir[2]);
-                 const pitch = Math.asin(Math.max(-1, Math.min(1, dir[1])));
-                 
-                 // Apply yaw and pitch
-                 const qPitch = Quaternion.createFromAxisAngle([1, 0, 0], -pitch);
-                 const qYaw = Quaternion.createFromAxisAngle([0, 1, 0], yaw);
-                 p.rot = Quaternion.multiply(qYaw, qPitch);
-             }
-          }
-       }
-    }
-    
     return didShoot;
   }
   
   /**
-   * Spawns a projectile from the barrel.
+   * Shooting logic is now handled by GameScreen.
    */
   shoot(type: 'normal' | 'grenade' = 'normal') {
-    const q = this.barrel.getQuaternion();
-    const direction = q.rotateVector([0, 0, -1]); 
-    const bPos = this.barrel.getPosition();
-    const startPos = [
-      bPos[0] + direction[0] * 1.5,
-      bPos[1] + direction[1] * 1.5,
-      bPos[2] + direction[2] * 1.5,
-    ];
-    
-    const pBody = gfx3JoltManager.addBox({
-      width: 0.5, height: 0.5, depth: type === 'grenade' ? 0.6 : 1.2,
-      x: startPos[0], y: startPos[1], z: startPos[2],
-      motionType: Gfx3Jolt.EMotionType_Dynamic,
-      layer: JOLT_LAYER_MOVING,
-      settings: { 
-          mMassPropertiesOverride: 0.01, 
-          mRestitution: 0.0,
-          mMotionQuality: Gfx3Jolt.EMotionQuality_LinearCast 
-      }
-    });
-    
-    let forwardSpeed = 50; // Slower, visible bullets
-    let upwardVelocity = 0.5; // slight arc for normal fire
-    
-    if (type === 'grenade') {
-        forwardSpeed = 25;
-        upwardVelocity = 15;
-    }
-    
-    const pVel = new Gfx3Jolt.Vec3(
-      direction[0] * forwardSpeed, 
-      (direction[1] * forwardSpeed) + upwardVelocity, 
-      direction[2] * forwardSpeed
-    );
-    gfx3JoltManager.bodyInterface.SetLinearVelocity(pBody.body.GetID(), pVel);
-
-    if (type === 'grenade') {
-        const angVel = new Gfx3Jolt.Vec3((Math.random() - 0.5) * 20, (Math.random() - 0.5) * 20, (Math.random() - 0.5) * 20);
-        gfx3JoltManager.bodyInterface.SetAngularVelocity(pBody.body.GetID(), angVel);
-    }
-    
-    // Tank no longer receives hard physics recoil from shooting to avoid camera jump
-    
-    this.projectiles.push({ body: pBody, life: 3.0, rot: q, type, lastVel: [pVel.GetX(), pVel.GetY(), pVel.GetZ()] });
+      // Stub: GameScreen calls this.update which returns fire intent
   }
 
   /**
-   * Renders all tank components and active projectiles.
+   * Renders all tank components.
    */
   draw() {
     this.body.draw();
@@ -358,23 +277,6 @@ export class Tank {
     this.barrel.draw();
     this.hatch.draw();
     this.antenna.draw();
-    
-    if (Tank.projMesh && Tank.projGrenadeMesh) {
-      for (const p of this.projectiles) {
-         const meshToDraw = p.type === 'grenade' ? Tank.projGrenadeMesh : Tank.projMesh;
-         const scale: [number, number, number] = p.type === 'grenade' ? [1.5, 1.5, 1.5] : [1, 1, 1];
-         const pPos = p.body.body.GetPosition();
-         let q = p.rot;
-         if (p.type === 'grenade') {
-             const pRot = p.body.body.GetRotation();
-             q = new Quaternion(pRot.GetW(), pRot.GetX(), pRot.GetY(), pRot.GetZ());
-         }
-         
-         const ZERO: [number, number, number] = [0,0,0];
-         const matProj = UT.MAT4_TRANSFORM([pPos.GetX(), pPos.GetY(), pPos.GetZ()], ZERO, scale, q);
-         gfx3MeshRenderer.drawMesh(meshToDraw, matProj);
-      }
-    }
   }
 }
 

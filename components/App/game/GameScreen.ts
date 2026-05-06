@@ -41,6 +41,7 @@ export class GameScreen extends Screen {
   isReady: boolean = false;
   cameraLookTarget: vec3 = [0, 0, 0];
   rightClickFire: boolean = false;
+  projectiles: any[] = [];
   
   constructor() {
     super();
@@ -118,6 +119,57 @@ export class GameScreen extends Screen {
     }
   };
 
+  spawnProjectile(owner: any, type: 'normal' | 'grenade') {
+    const isPlayer = owner === this.tank;
+    const barrel = isPlayer ? this.tank.barrel : owner.barrelMesh; // Enemy uses common barrel or logic
+    
+    // For enemy we need to calculate barrel pos manually since it uses shared mesh
+    let bPos, bRot, dir;
+    if (isPlayer) {
+        bPos = barrel.getPosition();
+        bRot = barrel.getQuaternion();
+    } else {
+        const currentRot = owner.physicsBody.body.GetRotation();
+        bRot = new Quaternion(currentRot.GetW(), currentRot.GetX(), currentRot.GetY(), currentRot.GetZ());
+        const pos = owner.physicsBody.body.GetPosition();
+        bPos = [pos.GetX(), pos.GetY() + 0.45, pos.GetZ()];
+    }
+    
+    dir = bRot.rotateVector([0, 0, -1]);
+    const startPos = [bPos[0] + dir[0] * 2.0, bPos[1] + dir[1] * 2.0, bPos[2] + dir[2] * 2.0];
+
+    const pBody = gfx3JoltManager.addBox({
+      width: 0.6, height: 0.6, depth: type === 'grenade' ? 0.8 : 1.4,
+      x: startPos[0], y: startPos[1], z: startPos[2],
+      motionType: Gfx3Jolt.EMotionType_Dynamic,
+      layer: JOLT_LAYER_MOVING,
+      settings: { mMassPropertiesOverride: 0.05, mRestitution: 0.0 }
+    });
+
+    const speed = isPlayer ? (type === 'grenade' ? 30 : 65) : (type === 'grenade' ? 25 : 45);
+    const upVel = type === 'grenade' ? 18 : (isPlayer ? 0.8 : 12); // add arc
+    const pVel = new Gfx3Jolt.Vec3(dir[0] * speed, (dir[1] * speed) + upVel, dir[2] * speed);
+    gfx3JoltManager.bodyInterface.SetLinearVelocity(pBody.body.GetID(), pVel);
+
+    this.projectiles.push({
+        body: pBody,
+        life: 3.5,
+        age: 0,
+        owner: owner,
+        type: type,
+        lastVel: [pVel.GetX(), pVel.GetY(), pVel.GetZ()]
+    });
+
+    // Muzzle Effect
+    const muzzlePos = [startPos[0] + dir[0] * 1.5, startPos[1] + dir[1] * 1.5, startPos[2] + dir[2] * 1.5] as vec3;
+    const muzzleColor: [number, number, number] = type === 'grenade' ? [0.8, 0.4, 0.1] : [1.0, 0.8, 0.2];
+    this.spawnExplosion(muzzlePos[0], muzzlePos[1], muzzlePos[2], muzzleColor, 1.0, 'muzzle', dir);
+  }
+
+  spawnExplosion(x: number, y: number, z: number, color?: [number, number, number], dir?: vec3, scale: number = 1.0, type: any = 'normal') {
+    this.explosions.push(new Explosion(x, y, z, color, dir, scale, type));
+  }
+
   update(ts: number) {
     inputManager.update(ts);
     gfx3JoltManager.update(ts);
@@ -153,8 +205,8 @@ export class GameScreen extends Screen {
     const targetPos = this.tank.body.getPosition();
     for (const enemy of this.enemies) {
        const res = enemy.update(ts, targetPos);
-       if (res.didShoot && res.muzzlePos && res.dir) {
-           this.explosions.push(new Explosion(res.muzzlePos[0], res.muzzlePos[1], res.muzzlePos[2], [1.0, 0.5, 0.1], res.dir));
+       if (res.didShoot) {
+           this.spawnProjectile(enemy, 'normal');
        }
     }
     
@@ -164,140 +216,114 @@ export class GameScreen extends Screen {
         if (!alive) this.explosions.splice(i, 1);
     }
 
-    // Hit Detection - Tank projectiles vs Enemies
-    for (const p of this.tank.projectiles) {
-        if (p.life <= 0) continue;
+    // Update based on possessed entity
+    const didShoot = this.tank.update(ts, combinedMoveDir, isFiring, this.cameraYaw, this.cameraPitch);
+    if (didShoot) {
+       this.spawnProjectile(this.tank, didShoot);
+    }
+    
+    // Process ALL projectiles (Tank + Enemy)
+    for (let i = this.projectiles.length - 1; i >= 0; i--) {
+        const p = this.projectiles[i];
+        p.life -= (ts / 1000);
+        p.age += (ts / 1000);
+        
+        if (p.life <= 0) {
+            gfx3JoltManager.remove(p.body.bodyId);
+            this.projectiles.splice(i, 1);
+            continue;
+        }
+
         const pPos = p.body.body.GetPosition();
         
-        // Trail
-        if (p.type === 'grenade' && Math.random() < 0.2) {
+        // Trail effects
+        if (p.type === 'grenade' && Math.random() < 0.3) {
             this.explosions.push(new Explosion(pPos.GetX(), pPos.GetY(), pPos.GetZ(), [0.4, 0.4, 0.4], undefined, 1.5, 'trail'));
         }
         
         const curV = p.body.body.GetLinearVelocity();
-        const velSq = curV.GetX()*curV.GetX() + curV.GetY()*curV.GetY() + curV.GetZ()*curV.GetZ();
+        const vX = curV.GetX(), vY = curV.GetY(), vZ = curV.GetZ();
+        const hVelSq = vX*vX + vZ*vZ;
+        const lastHVelSq = p.lastVel[0]*p.lastVel[0] + p.lastVel[2]*p.lastVel[2];
         
-        let hitEnemy = false;
+        let impact = false;
         
-        for (const enemy of this.enemies) {
-            if (enemy.hp <= 0) continue;
-            const ePos = enemy.physicsBody.body.GetPosition();
-            const dx = pPos.GetX() - ePos.GetX();
-            const dy = pPos.GetY() - ePos.GetY();
-            const dz = pPos.GetZ() - ePos.GetZ();
+        // 1. Check hitting player (if not owner)
+        if (p.owner !== this.tank && p.age > 0.1) {
+            const tPos = this.tank.body.getPosition();
+            const dx = pPos.GetX() - tPos[0], dy = pPos.GetY() - tPos[1], dz = pPos.GetZ() - tPos[2];
             const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
-            if (dist < 2.2) {
-                hitEnemy = true;
-                if (p.type === 'grenade') {
-                    enemy.hp -= 100; // instant kill
-                    p.life = 0; 
-                    this.explosions.push(new Explosion(pPos.GetX(), pPos.GetY(), pPos.GetZ(), [0.8, 0.4, 0.1], undefined, 3.0, 'grenade'));
-                } else {
-                    enemy.hp -= 34; // 3 hits to kill (100 hp)
-                    p.life = 0; 
-                    this.explosions.push(new Explosion(pPos.GetX(), pPos.GetY(), pPos.GetZ(), [1.0, 0.7, 0.2], undefined, 1.0));
-                }
-                
-                // Add a consistent visual hop and push
-                const pushDir = p.rot.rotateVector([0, 0, -1]);
-                const pushMagnitude = p.type === 'grenade' ? 1200 : 600;
-                const pushForce = new Gfx3Jolt.Vec3(pushDir[0] * pushMagnitude, p.type === 'grenade' ? 1000 : 500, pushDir[2] * pushMagnitude);
-                gfx3JoltManager.bodyInterface.AddImpulse(enemy.physicsBody.body.GetID(), pushForce);
-
-                if (enemy.hp <= 0) {
-                    this.explosions.push(new Explosion(ePos.GetX(), ePos.GetY(), ePos.GetZ(), [0.8, 0.2, 0.2], undefined, p.type === 'grenade' ? 2.5 : 1.5));
-                    gfx3JoltManager.bodyInterface.SetPosition(enemy.physicsBody.body.GetID(), VEC3_TO_JOLT_RVEC3([0, -100, 0]), Gfx3Jolt.EActivation_DontActivate);
-                }
-                break;
+            if (dist < 2.5) {
+                impact = true;
+                this.explosions.push(new Explosion(pPos.GetX(), pPos.GetY(), pPos.GetZ(), [0.8, 0.2, 0.2]));
+                const pushDir = UT.VEC3_NORMALIZE([vX, vY, vZ]);
+                const pushForce = new Gfx3Jolt.Vec3(pushDir[0] * 1200, 400, pushDir[2] * 1200);
+                gfx3JoltManager.bodyInterface.AddImpulse(this.tank.physicsBody.body.GetID(), pushForce);
             }
         }
-        
-        if (hitEnemy) continue;
 
-        // Detect impact: if it hits the ground OR its horizontal speed drops abruptly (hits a wall)
-        const hVelSq = curV.GetX()*curV.GetX() + curV.GetZ()*curV.GetZ();
-        const lastHVelSq = p.lastVel[0]*p.lastVel[0] + p.lastVel[2]*p.lastVel[2];
-        const isImpact = pPos.GetY() < 0.2 || (Math.abs(lastHVelSq - hVelSq) > 100); 
-
-        if (isImpact) {
-            p.life = 0;
-            if (p.type === 'grenade') {
-                this.explosions.push(new Explosion(pPos.GetX(), pPos.GetY(), pPos.GetZ(), [0.8, 0.4, 0.1], undefined, 3.0, 'grenade'));
+        // 2. Check hitting enemies
+        if (!impact && p.age > 0.1) {
+            for (const enemy of this.enemies) {
+                if (enemy.hp <= 0 || enemy === p.owner) continue;
+                const ePos = enemy.physicsBody.body.GetPosition();
+                const dx = pPos.GetX() - ePos.GetX(), dy = pPos.GetY() - ePos.GetY(), dz = pPos.GetZ() - ePos.GetZ();
+                const distSq = dx*dx + dy*dy + dz*dz;
                 
-                // Area of effect damage
+                if (distSq < 6.0) { // approx 2.45m
+                    impact = true;
+                    if (p.type === 'grenade') {
+                        enemy.hp -= 100;
+                        this.spawnExplosion(pPos.GetX(), pPos.GetY(), pPos.GetZ(), [0.8, 0.4, 0.1], undefined, 3.0, 'grenade');
+                    } else {
+                        enemy.hp -= 34;
+                        this.spawnExplosion(pPos.GetX(), pPos.GetY(), pPos.GetZ(), [1.0, 0.7, 0.2], undefined, 1.2);
+                    }
+
+                    const pushDir = [vX, vY, vZ];
+                    const mag = p.type === 'grenade' ? 1500 : 700;
+                    const forceVec = UT.VEC3_SCALE(UT.VEC3_NORMALIZE([pushDir[0], 0.5, pushDir[2]]), mag);
+                    gfx3JoltManager.bodyInterface.AddImpulse(enemy.physicsBody.body.GetID(), new Gfx3Jolt.Vec3(forceVec[0], forceVec[1], forceVec[2]));
+
+                    if (enemy.hp <= 0) {
+                        this.spawnExplosion(ePos.GetX(), ePos.GetY(), ePos.GetZ(), [0.8, 0.2, 0.2], 2.0);
+                        gfx3JoltManager.bodyInterface.SetPosition(enemy.physicsBody.body.GetID(), VEC3_TO_JOLT_RVEC3([0, -100, 0]), Gfx3Jolt.EActivation_DontActivate);
+                    }
+                    break;
+                }
+            }
+        }
+
+        // 3. Ground/Obstacle impact
+        if (!impact && (pPos.GetY() < 0.2 || (p.age > 0.05 && Math.abs(lastHVelSq - hVelSq) > 150))) {
+            impact = true;
+            if (p.type === 'grenade') {
+                this.spawnExplosion(pPos.GetX(), pPos.GetY(), pPos.GetZ(), [0.8, 0.4, 0.1], undefined, 3.5, 'grenade');
+                // AoE damage
                 for (const enemy of this.enemies) {
                     if (enemy.hp <= 0) continue;
                     const ePos = enemy.physicsBody.body.GetPosition();
-                    const dx = ePos.GetX() - pPos.GetX();
-                    const dz = ePos.GetZ() - pPos.GetZ();
-                    const aoeDist = Math.sqrt(dx*dx + dz*dz);
-                    if (aoeDist < 10) {
+                    const d_x = ePos.GetX() - pPos.GetX(), d_z = ePos.GetZ() - pPos.GetZ();
+                    const distAoe = Math.sqrt(d_x*d_x + d_z*d_z);
+                    if (distAoe < 12) {
                         enemy.hp -= 100;
-                        const pushDir = UT.VEC3_NORMALIZE([dx, 1.0, dz]);
-                        const pushMagnitude = 1500;
-                        const pushForce = new Gfx3Jolt.Vec3(pushDir[0] * pushMagnitude, pushDir[1] * pushMagnitude, pushDir[2] * pushMagnitude);
-                        gfx3JoltManager.bodyInterface.AddImpulse(enemy.physicsBody.body.GetID(), pushForce);
                         if (enemy.hp <= 0) {
-                            this.explosions.push(new Explosion(ePos.GetX(), ePos.GetY(), ePos.GetZ(), [0.8, 0.2, 0.2], undefined, 2.0));
+                            this.spawnExplosion(ePos.GetX(), ePos.GetY() + 0.5, ePos.GetZ(), [0.8, 0.3, 0.2], undefined, 2.5);
                             gfx3JoltManager.bodyInterface.SetPosition(enemy.physicsBody.body.GetID(), VEC3_TO_JOLT_RVEC3([0, -100, 0]), Gfx3Jolt.EActivation_DontActivate);
                         }
                     }
                 }
             } else {
-                this.explosions.push(new Explosion(pPos.GetX(), pPos.GetY(), pPos.GetZ(), [1.0, 0.7, 0.2], undefined, 1.0));
+                this.spawnExplosion(pPos.GetX(), pPos.GetY(), pPos.GetZ(), [1.0, 0.7, 0.2], undefined, 1.0);
             }
         }
-    }
-    
-    // Enemy projectiles vs Player/Tank
-    for (const enemy of this.enemies) {
-        for (const p of enemy.projectiles) {
-            if (p.life <= 0) continue;
-            const pPos = p.body.body.GetPosition();
-            
-            const pTarget = this.tank.body.getPosition();
-            const dx = pPos.GetX() - pTarget[0];
-            const dy = pPos.GetY() - pTarget[1];
-            const dz = pPos.GetZ() - pTarget[2];
-            const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
-            
-            const curV = p.body.body.GetLinearVelocity();
-            const hVelSq = curV.GetX()*curV.GetX() + curV.GetZ()*curV.GetZ();
-            const lastHVelSq = p.lastVel[0]*p.lastVel[0] + p.lastVel[2]*p.lastVel[2];
-            
-            if (dist < 2.5) {
-                p.life = 0;
-                this.explosions.push(new Explosion(pPos.GetX(), pPos.GetY(), pPos.GetZ()));
-                
-                // Add a push to the tank
-                const pushDir = p.rot.rotateVector([0, 0, -1]);
-                const pushForce = new Gfx3Jolt.Vec3(pushDir[0] * 800, 200, pushDir[2] * 800);
-                gfx3JoltManager.bodyInterface.AddImpulse(this.tank.physicsBody.body.GetID(), pushForce);
-                
-                // Add camera shake or player damage logic here
-            } else if (pPos.GetY() < 0.2 || (Math.abs(lastHVelSq - hVelSq) > 100)) {
-                p.life = 0;
-                this.explosions.push(new Explosion(pPos.GetX(), pPos.GetY(), pPos.GetZ()));
-            }
-        }
-    }
 
-    // Update based on possessed entity
-    const didShoot = this.tank.update(ts, combinedMoveDir, isFiring, this.cameraYaw, this.cameraPitch);
-    if (didShoot) {
-       const bPos = this.tank.barrel.getPosition();
-       const bRot = this.tank.barrel.getQuaternion();
-       const dir = bRot.rotateVector([0, 0, -1]);
-       
-       const muzzlePos = [
-           bPos[0] + dir[0] * 3.0,
-           bPos[1] + dir[1] * 3.0,
-           bPos[2] + dir[2] * 3.0,
-       ] as vec3;
-       
-       const muzzleColor: [number, number, number] = didShoot === 'grenade' ? [0.8, 0.4, 0.1] : [1.0, 0.8, 0.2];
-       const scaleMultiplier = didShoot === 'grenade' ? 2.5 : 1.0; // Increased scale for grenade muzzle
-       this.explosions.push(new Explosion(muzzlePos[0], muzzlePos[1], muzzlePos[2], muzzleColor, dir, scaleMultiplier, 'muzzle'));
+        if (impact) {
+            gfx3JoltManager.remove(p.body.bodyId);
+            this.projectiles.splice(i, 1);
+        } else {
+            p.lastVel = [vX, vY, vZ];
+        }
     }
 
     // Camera Follow
@@ -364,6 +390,35 @@ export class GameScreen extends Screen {
     for (const enemy of this.enemies) {
        enemy.draw();
     }
+    
+    // Draw all projectiles in one Batch
+    if (Tank.projMesh && Tank.projGrenadeMesh) {
+        Tank.projMesh.draw(); // Prepare mesh for drawing
+        Tank.projGrenadeMesh.draw();
+
+        for (const p of this.projectiles) {
+            const mesh = p.type === 'grenade' ? Tank.projGrenadeMesh : Tank.projMesh;
+            const pPos = p.body.body.GetPosition();
+            const pRot = p.body.body.GetRotation();
+            const q = new Quaternion(pRot.GetW(), pRot.GetX(), pRot.GetY(), pRot.GetZ());
+            
+            // For normal bullets, make them face their velocity
+            let drawQ = q;
+            if (p.type === 'normal') {
+                const velLen = Math.sqrt(p.lastVel[0]**2 + p.lastVel[1]**2 + p.lastVel[2]**2);
+                if (velLen > 0.1) {
+                    const dir = [-p.lastVel[0]/velLen, -p.lastVel[1]/velLen, -p.lastVel[2]/velLen];
+                    const yaw = Math.atan2(dir[0], dir[2]);
+                    const pitch = Math.asin(Math.max(-1, Math.min(1, dir[1])));
+                    drawQ = Quaternion.multiply(Quaternion.createFromAxisAngle([0, 1, 0], yaw), Quaternion.createFromAxisAngle([1, 0, 0], -pitch));
+                }
+            }
+
+            const mat = UT.MAT4_TRANSFORM([pPos.GetX(), pPos.GetY(), pPos.GetZ()], [0,0,0], [1,1,1], drawQ);
+            gfx3MeshRenderer.drawMesh(mesh, mat);
+        }
+    }
+
     for (const exp of this.explosions) {
        exp.draw();
     }

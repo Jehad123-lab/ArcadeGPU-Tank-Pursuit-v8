@@ -61,8 +61,6 @@ export class Enemy {
   hp: number = 100;
   currentUp: vec3 = [0, 1, 0];
   
-  projectiles: { body: any, life: number, rot: Quaternion, lastVel: [number, number, number] }[] = [];
-
   constructor(x: number, y: number, z: number) {
     // Note: initMeshes should be called externally to wait for async loading
     if (!Enemy.initialized) {
@@ -80,20 +78,6 @@ export class Enemy {
 
 
   update(ts: number, targetPos: any): { didShoot: boolean, muzzlePos?: vec3, dir?: vec3 } {
-    // Update projectiles ALWAYS, even if dead
-    for (let i = this.projectiles.length - 1; i >= 0; i--) {
-       const p = this.projectiles[i];
-       p.life -= (ts / 1000);
-       
-       if (p.life <= 0) {
-          gfx3JoltManager.remove(p.body.bodyId);
-          this.projectiles.splice(i, 1);
-       } else {
-          const curV = p.body.body.GetLinearVelocity();
-          p.lastVel = [curV.GetX(), curV.GetY(), curV.GetZ()];
-       }
-    }
-
     if (this.hp <= 0) return { didShoot: false };
 
     this.recoil -= (ts / 1000) * 5; 
@@ -180,6 +164,9 @@ export class Enemy {
     return { didShoot, muzzlePos, dir };
   }
   
+  /**
+   * Shoot logic is handled by GameScreen.
+   */
   shoot(q: Quaternion): { muzzlePos: vec3, dir: vec3 } {
     const direction = q.rotateVector([0, 0, -1]); 
     const currentRot = this.physicsBody.body.GetRotation();
@@ -196,33 +183,6 @@ export class Enemy {
       bPos[2] + direction[2] * 1.5,
     ];
     
-    const pBody = gfx3JoltManager.addBox({
-      width: 0.6, height: 0.6, depth: 0.6,
-      x: startPos[0], y: startPos[1], z: startPos[2],
-      motionType: Gfx3Jolt.EMotionType_Dynamic,
-      layer: JOLT_LAYER_MOVING,
-      settings: { 
-          mMassPropertiesOverride: 0.01, 
-          mRestitution: 0.0,
-          mMotionQuality: Gfx3Jolt.EMotionQuality_LinearCast
-      }
-    });
-    
-    // Add arced motion similar to artillery/grenades
-    const forwardSpeed = 35; // slightly slower than player
-    const upwardVelocity = 15;
-    const pVel = new Gfx3Jolt.Vec3(
-      direction[0] * forwardSpeed, 
-      (direction[1] * forwardSpeed) + upwardVelocity, 
-      direction[2] * forwardSpeed
-    );
-    gfx3JoltManager.bodyInterface.SetLinearVelocity(pBody.body.GetID(), pVel);
-    
-    const recoilForce = new Gfx3Jolt.Vec3(-direction[0] * 500, -direction[1] * 500, -direction[2] * 500);
-    gfx3JoltManager.bodyInterface.AddImpulse(this.physicsBody.body.GetID(), recoilForce);
-    
-    this.projectiles.push({ body: pBody, life: 3.0, rot: q, lastVel: [pVel.GetX(), pVel.GetY(), pVel.GetZ()] });
-    
     return {
        muzzlePos: [startPos[0], startPos[1], startPos[2]] as vec3,
        dir: [direction[0], direction[1], direction[2]] as vec3
@@ -233,15 +193,6 @@ export class Enemy {
     const scale: vec3 = [1, 1, 1];
     const ZERO: vec3 = [0,0,0];
 
-    // Always draw projectiles
-    for (const p of this.projectiles) {
-       const pPos = p.body.body.GetPosition();
-       const pRot = p.body.body.GetRotation();
-       const pQ = new Quaternion(pRot.GetW(), pRot.GetX(), pRot.GetY(), pRot.GetZ());
-       const matProj = UT.MAT4_TRANSFORM([pPos.GetX(), pPos.GetY(), pPos.GetZ()], ZERO, scale, pQ);
-       gfx3MeshRenderer.drawMesh(Enemy.projMesh, matProj);
-    }
-    
     if (this.hp <= 0) return;
 
     const pos = this.physicsBody.body.GetPosition();
